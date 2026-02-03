@@ -78,7 +78,8 @@ DEFAULT_AUDIO_PATHS = [
 
 def load_prompt_audio(audio_path: str, target_sample_rate: int) -> torch.Tensor:
     """Load and resample audio file."""
-    audio_tensor, sample_rate = torchaudio.load(audio_path)
+    # Use soundfile backend to avoid torchcodec/FFmpeg issues
+    audio_tensor, sample_rate = torchaudio.load(audio_path, backend="soundfile")
     audio_tensor = audio_tensor.squeeze(0)
     audio_tensor = torchaudio.functional.resample(
         audio_tensor, orig_freq=sample_rate, new_freq=target_sample_rate

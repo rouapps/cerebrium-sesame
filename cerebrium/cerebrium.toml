@@ -27,7 +27,4 @@ pip = "requirements.txt"
 
 [cerebrium.dependencies.apt]
 ffmpeg = "latest"
-libavutil58 = "latest"
-libavcodec60 = "latest"
-libavformat60 = "latest"
-libswresample4 = "latest"
+libsndfile1 = "latest"
