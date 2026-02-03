@@ -47,3 +47,8 @@ env/
 # Cerebrium
 .cerebrium/
 cerebrium_build/
+
+# Test files
+test_deployment.py
+diagnose_deployment.py
+test_output_*.wav
