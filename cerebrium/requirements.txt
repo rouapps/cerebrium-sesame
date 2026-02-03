@@ -1,0 +1,12 @@
+# Cerebrium Sesame CSM deployment requirements
+torch>=2.1.0
+torchaudio>=2.1.0
+transformers>=4.40.0
+tokenizers>=0.15.0
+huggingface_hub>=0.20.0
+moshi>=0.2.2
+safetensors>=0.4.0
+numpy<2.0.0
+hf_transfer
+pydantic>=2.0.0
+fastapi>=0.100.0
