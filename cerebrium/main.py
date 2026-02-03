@@ -5,6 +5,8 @@ This module provides a streaming TTS endpoint using Server-Sent Events (SSE)
 for real-time audio generation with Sesame's CSM model.
 """
 import os
+# Force soundfile backend before importing torchaudio
+os.environ["TORCHAUDIO_USE_BACKEND_DISPATCHER"] = "1"
 import json
 import base64
 import logging
@@ -12,6 +14,11 @@ from typing import Optional, List
 import numpy as np
 import torch
 import torchaudio
+# Force soundfile backend to avoid torchcodec/FFmpeg issues
+try:
+    torchaudio.set_audio_backend("soundfile")
+except Exception:
+    pass  # Newer versions may not have this function
 from pydantic import BaseModel
 from huggingface_hub import hf_hub_download
 
@@ -166,7 +173,7 @@ def generate_audio(text: str, speaker: int = 0, max_audio_length_ms: int = 30000
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         temp_path = f.name
     
-    torchaudio.save(temp_path, audio.unsqueeze(0), gen.sample_rate)
+    torchaudio.save(temp_path, audio.unsqueeze(0), gen.sample_rate, backend="soundfile")
     
     with open(temp_path, "rb") as f:
         wav_data = f.read()
