@@ -119,8 +119,8 @@ class GenerateRequest(BaseModel):
     text: str
     speaker: int = 0
     max_audio_length_ms: int = 30000
-    temperature: float = 0.5  # Lower = more stable audio
-    topk: int = 30  # Lower = more consistent output
+    temperature: float = 0.9  # Official default
+    topk: int = 50  # Official default
     use_default_context: bool = True
     # Optional: custom context audio as base64
     context_audio_b64: Optional[str] = None
@@ -143,7 +143,7 @@ class GenerateResponse(BaseModel):
 
 
 def generate_audio(text: str, speaker: int = 0, max_audio_length_ms: int = 30000,
-                   temperature: float = 0.5, topk: int = 30) -> dict:
+                   temperature: float = 0.9, topk: int = 50) -> dict:
     """
     Generate complete audio (non-streaming).
     
@@ -192,7 +192,7 @@ def generate_audio(text: str, speaker: int = 0, max_audio_length_ms: int = 30000
 
 
 def generate_audio_stream(text: str, speaker: int = 0, max_audio_length_ms: int = 30000,
-                          temperature: float = 0.8, topk: int = 50):
+                          temperature: float = 0.9, topk: int = 50):
     """
     Generate audio with streaming via Server-Sent Events.
     
@@ -246,8 +246,8 @@ def generate_audio_stream(text: str, speaker: int = 0, max_audio_length_ms: int 
 # The main entry point is either generate_audio or generate_audio_stream
 
 def predict(text: str, speaker: int = 0, stream: bool = False, 
-            max_audio_length_ms: int = 30000, temperature: float = 0.5, 
-            topk: int = 30) -> dict:
+            max_audio_length_ms: int = 30000, temperature: float = 0.9, 
+            topk: int = 50) -> dict:
     """
     Main prediction endpoint for Cerebrium.
     
