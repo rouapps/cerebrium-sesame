@@ -60,7 +60,8 @@ class Generator:
         self.sample_rate = mimi.sample_rate
         self.device = device
 
-        self._stream_buffer_size = 20
+        self._first_chunk_size = 5     # First chunk FAST (~400ms) for low latency
+        self._stream_buffer_size = 25  # Subsequent chunks larger for smooth audio
         self.max_seq_len = 2048
         self._text_token_cache = {}
 
@@ -153,8 +154,10 @@ class Generator:
         max_generation_len = int(max_audio_length_ms / 80)
         tokens, tokens_mask = [], []
 
-        batch_size = 20
-        buffer_size = 20
+        batch_size = 10  # Process frames in small batches
+        first_chunk_size = 5   # FAST first chunk (~400ms audio)
+        buffer_size = 25  # Larger subsequent chunks for smooth audio
+        is_first_chunk = True
 
         # Tokenize context segments
         if context:
@@ -217,32 +220,39 @@ class Generator:
                 frame_buffer.extend(batch_samples)
                 i += len(batch_samples)
 
-                # Yield audio chunk when buffer is full
-                if len(frame_buffer) >= buffer_size:
-                    frames_to_process = frame_buffer[:buffer_size]
+                # Use smaller size for FIRST chunk (low latency), larger for rest (smooth)
+                current_buffer_target = first_chunk_size if is_first_chunk else buffer_size
+
+                # Yield audio chunk when buffer reaches target
+                if len(frame_buffer) >= current_buffer_target:
+                    frames_to_process = frame_buffer[:current_buffer_target]
                     frames_stacked = torch.stack(frames_to_process).permute(1, 2, 0)
                     audio_chunk = self._audio_tokenizer.decode(frames_stacked).squeeze(0).squeeze(0)
-                    frame_buffer = frame_buffer[buffer_size:]
+                    frame_buffer = frame_buffer[current_buffer_target:]
+                    is_first_chunk = False  # Switch to larger chunks after first
                     yield audio_chunk.cpu()
 
             # Process remaining frames
             if frame_buffer:
-                if len(frame_buffer) < buffer_size:
-                    # Pad with zeros
+                current_size = buffer_size  # Use standard size for padding calc
+                if len(frame_buffer) < current_size:
+                    # Pad with zeros for decoder
                     padding_frames = [
                         torch.zeros_like(frame_buffer[0]) 
-                        for _ in range(buffer_size - len(frame_buffer))
+                        for _ in range(current_size - len(frame_buffer))
                     ]
                     frames_to_process = frame_buffer + padding_frames
+                    actual_frame_count = len(frame_buffer)
                 else:
-                    frames_to_process = frame_buffer[:buffer_size]
+                    frames_to_process = frame_buffer[:current_size]
+                    actual_frame_count = current_size
                     
                 frames_stacked = torch.stack(frames_to_process).permute(1, 2, 0)
                 audio_chunk = self._audio_tokenizer.decode(frames_stacked).squeeze(0).squeeze(0)
                 
                 # Return only non-padded portion
-                if len(frame_buffer) < buffer_size:
-                    actual_samples = int(audio_chunk.shape[0] * len(frame_buffer) / buffer_size)
+                if len(frame_buffer) < current_size:
+                    actual_samples = int(audio_chunk.shape[0] * actual_frame_count / current_size)
                     audio_chunk = audio_chunk[:actual_samples]
                     
                 yield audio_chunk.cpu()
@@ -254,11 +264,12 @@ class Generator:
         speaker: int,
         context: List[Segment],
         max_audio_length_ms: float = 90_000,
-        temperature: float = 0.8,
-        topk: int = 50,
+        temperature: float = 0.5,
+        topk: int = 30,
     ) -> torch.Tensor:
         """
-        Generate complete audio (non-streaming).
+        Generate complete audio by collecting streaming chunks.
+        Uses streaming internally but returns complete audio.
         
         Args:
             text: Text to synthesize
@@ -288,7 +299,7 @@ class Generator:
 
 def load_csm_1b(device: str = "cuda") -> Generator:
     """
-    Load the CSM-1B model.
+    Load the CSM-1B model with optimizations for low latency.
     
     Args:
         device: Device to load model on
@@ -296,10 +307,11 @@ def load_csm_1b(device: str = "cuda") -> Generator:
     Returns:
         Generator instance
     """
-    logger.info("Loading CSM-1B model...")
+    logger.info("Loading CSM-1B model with optimizations...")
     
     if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
         torch.cuda.empty_cache()
     
@@ -307,6 +319,13 @@ def load_csm_1b(device: str = "cuda") -> Generator:
     
     dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
     model.to(device=device, dtype=dtype)
+    
+    # Compile model for faster inference (PyTorch 2.0+)
+    try:
+        model = torch.compile(model, mode="reduce-overhead")
+        logger.info("Model compiled with torch.compile for faster inference")
+    except Exception as e:
+        logger.warning(f"torch.compile not available: {e}")
     
     generator = Generator(model)
     logger.info("CSM-1B model loaded successfully")

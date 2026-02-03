@@ -49,31 +49,19 @@ def get_generator() -> Generator:
 # Pre-load model on import
 generator = get_generator()
 
-# Default reference audio for voice context
-DEFAULT_SPEAKERS = [0, 1]
+# Default reference audio for voice context - SINGLE context for faster processing
+# Using just one speaker context reduces tokenization time significantly
+DEFAULT_SPEAKERS = [0]
 DEFAULT_TRANSCRIPTS = [
     (
         "like revising for an exam I'd have to try and like keep up the momentum because I'd "
-        "start really early I'd be like okay I'm gonna start revising now and then like "
-        "you're revising for ages and then I just like start losing steam I didn't do that "
-        "for the exam we had recently to be fair that was a more of a last minute scenario "
-        "but like yeah I'm trying to like yeah I noticed this yesterday that like Mondays I "
-        "sort of start the day with this not like a panic but like a"
+        "start really early I'd be like okay I'm gonna start revising now"
     ),
-    (
-        "like a super Mario level. Like it's very like high detail. And like, once you get "
-        "into the park, it just like, everything looks like a computer game and they have all "
-        "these, like, you know, if, if there's like a, you know, like in a Mario game, they "
-        "will have like a question block. And if you like, you know, punch it, a coin will "
-        "come out. So like everyone, when they come into the park, they get like this little "
-        "bracelet and then you can go punching question blocks around."
-    )
 ]
 
-# Download default reference audio
+# Download default reference audio (single file for speed)
 DEFAULT_AUDIO_PATHS = [
     hf_hub_download(repo_id="sesame/csm-1b", filename="prompts/conversational_a.wav"),
-    hf_hub_download(repo_id="sesame/csm-1b", filename="prompts/conversational_b.wav"),
 ]
 
 
@@ -94,8 +82,16 @@ def load_prompt_audio(audio_path: str, target_sample_rate: int) -> torch.Tensor:
     return audio_tensor
 
 
+# Cache the default context (loaded once at startup)
+_cached_context: Optional[List[Segment]] = None
+
 def get_default_context() -> List[Segment]:
-    """Get default voice context segments."""
+    """Get default voice context segments (cached for speed)."""
+    global _cached_context
+    
+    if _cached_context is not None:
+        return _cached_context
+    
     gen = get_generator()
     segments = []
     
@@ -109,7 +105,12 @@ def get_default_context() -> List[Segment]:
             audio=audio
         ))
     
+    _cached_context = segments
+    logger.info("Default context cached for fast inference")
     return segments
+
+# Pre-load context at startup
+_cached_context = get_default_context()
 
 
 # Request/Response models
@@ -118,8 +119,8 @@ class GenerateRequest(BaseModel):
     text: str
     speaker: int = 0
     max_audio_length_ms: int = 30000
-    temperature: float = 0.8
-    topk: int = 50
+    temperature: float = 0.5  # Lower = more stable audio
+    topk: int = 30  # Lower = more consistent output
     use_default_context: bool = True
     # Optional: custom context audio as base64
     context_audio_b64: Optional[str] = None
@@ -142,7 +143,7 @@ class GenerateResponse(BaseModel):
 
 
 def generate_audio(text: str, speaker: int = 0, max_audio_length_ms: int = 30000,
-                   temperature: float = 0.8, topk: int = 50) -> dict:
+                   temperature: float = 0.5, topk: int = 30) -> dict:
     """
     Generate complete audio (non-streaming).
     
@@ -245,8 +246,8 @@ def generate_audio_stream(text: str, speaker: int = 0, max_audio_length_ms: int 
 # The main entry point is either generate_audio or generate_audio_stream
 
 def predict(text: str, speaker: int = 0, stream: bool = False, 
-            max_audio_length_ms: int = 30000, temperature: float = 0.8, 
-            topk: int = 50) -> dict:
+            max_audio_length_ms: int = 30000, temperature: float = 0.5, 
+            topk: int = 30) -> dict:
     """
     Main prediction endpoint for Cerebrium.
     
