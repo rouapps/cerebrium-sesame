@@ -3,6 +3,7 @@ torch>=2.1.0
 torchaudio>=2.1.0
 torchao>=0.4.0
 torchtune>=0.3.0
+triton>=2.1.0; sys_platform != 'darwin'
 transformers>=4.40.0
 tokenizers>=0.15.0
 huggingface_hub>=0.20.0
