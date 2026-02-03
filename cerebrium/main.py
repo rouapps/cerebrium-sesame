@@ -5,8 +5,6 @@ This module provides a streaming TTS endpoint using Server-Sent Events (SSE)
 for real-time audio generation with Sesame's CSM model.
 """
 import os
-# Force soundfile backend before importing torchaudio
-os.environ["TORCHAUDIO_USE_BACKEND_DISPATCHER"] = "1"
 import json
 import base64
 import logging
@@ -14,11 +12,7 @@ from typing import Optional, List
 import numpy as np
 import torch
 import torchaudio
-# Force soundfile backend to avoid torchcodec/FFmpeg issues
-try:
-    torchaudio.set_audio_backend("soundfile")
-except Exception:
-    pass  # Newer versions may not have this function
+import soundfile as sf
 from pydantic import BaseModel
 from huggingface_hub import hf_hub_download
 
@@ -85,12 +79,18 @@ DEFAULT_AUDIO_PATHS = [
 
 def load_prompt_audio(audio_path: str, target_sample_rate: int) -> torch.Tensor:
     """Load and resample audio file."""
-    # Use soundfile backend to avoid torchcodec/FFmpeg issues
-    audio_tensor, sample_rate = torchaudio.load(audio_path, backend="soundfile")
-    audio_tensor = audio_tensor.squeeze(0)
-    audio_tensor = torchaudio.functional.resample(
-        audio_tensor, orig_freq=sample_rate, new_freq=target_sample_rate
-    )
+    # Use soundfile directly to avoid torchcodec/FFmpeg issues
+    audio_np, sample_rate = sf.read(audio_path)
+    # Convert to tensor (soundfile returns float64, we need float32)
+    audio_tensor = torch.from_numpy(audio_np.astype(np.float32))
+    # Handle stereo -> mono if needed
+    if audio_tensor.dim() > 1:
+        audio_tensor = audio_tensor.mean(dim=-1)
+    # Resample if needed
+    if sample_rate != target_sample_rate:
+        audio_tensor = torchaudio.functional.resample(
+            audio_tensor, orig_freq=sample_rate, new_freq=target_sample_rate
+        )
     return audio_tensor
 
 
@@ -168,12 +168,14 @@ def generate_audio(text: str, speaker: int = 0, max_audio_length_ms: int = 30000
         topk=topk
     )
     
-    # Save to temporary file and encode
+    # Save to temporary file and encode using soundfile directly
     import tempfile
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         temp_path = f.name
     
-    torchaudio.save(temp_path, audio.unsqueeze(0), gen.sample_rate, backend="soundfile")
+    # Convert tensor to numpy and save with soundfile
+    audio_np = audio.cpu().numpy()
+    sf.write(temp_path, audio_np, gen.sample_rate)
     
     with open(temp_path, "rb") as f:
         wav_data = f.read()

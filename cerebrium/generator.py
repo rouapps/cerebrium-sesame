@@ -1,19 +1,11 @@
 """
 Cerebrium-optimized Sesame CSM Generator with streaming support.
 """
-import os
-# Force soundfile backend before importing torchaudio
-os.environ["TORCHAUDIO_USE_BACKEND_DISPATCHER"] = "1"
 from dataclasses import dataclass
 from typing import List, Tuple, Generator as PyGenerator, Optional
 import time
 import torch
 import torchaudio
-# Force soundfile backend to avoid torchcodec/FFmpeg issues
-try:
-    torchaudio.set_audio_backend("soundfile")
-except Exception:
-    pass  # Newer versions may not have this function
 from huggingface_hub import hf_hub_download
 from models import Model, ModelArgs
 from moshi.models import loaders
