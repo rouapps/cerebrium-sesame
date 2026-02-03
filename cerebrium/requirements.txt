@@ -1,6 +1,7 @@
 # Cerebrium Sesame CSM deployment requirements
 torch>=2.1.0
 torchaudio>=2.1.0
+torchao>=0.4.0
 torchtune>=0.3.0
 transformers>=4.40.0
 tokenizers>=0.15.0
