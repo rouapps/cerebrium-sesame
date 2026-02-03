@@ -48,9 +48,13 @@ class Generator:
 
         self._text_tokenizer = load_llama3_tokenizer()
         device = next(model.parameters()).device
+        dtype = next(model.parameters()).dtype  # Get model's dtype for consistency
 
         mimi_weight = hf_hub_download(loaders.DEFAULT_REPO, loaders.MIMI_NAME)
         mimi = loaders.get_mimi(mimi_weight, device=device)
+        
+        # Convert mimi to the same dtype as the main model to avoid dtype mismatches
+        mimi = mimi.to(dtype=dtype)
         
         num_codebooks = model.config.audio_num_codebooks
         mimi.set_num_codebooks(num_codebooks)
@@ -59,6 +63,7 @@ class Generator:
 
         self.sample_rate = mimi.sample_rate
         self.device = device
+        self.dtype = dtype  # Store dtype for autocast
 
         self._first_chunk_size = 5     # First chunk FAST (~400ms) for low latency
         self._stream_buffer_size = 25  # Subsequent chunks larger for smooth audio
@@ -84,8 +89,10 @@ class Generator:
 
     def _tokenize_audio(self, audio: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Tokenize audio using MIMI codec."""
-        audio = audio.to(self.device)
-        audio_tokens = self._audio_tokenizer.encode(audio.unsqueeze(0).unsqueeze(0))[0]
+        audio = audio.to(device=self.device, dtype=self.dtype)
+        # Use autocast to ensure consistent dtype during encode
+        with torch.autocast(device_type=self.device.type, dtype=self.dtype):
+            audio_tokens = self._audio_tokenizer.encode(audio.unsqueeze(0).unsqueeze(0))[0]
         audio_tokens = audio_tokens[:self._num_codebooks, :]
         
         # Add EOS frame
@@ -227,7 +234,9 @@ class Generator:
                 if len(frame_buffer) >= current_buffer_target:
                     frames_to_process = frame_buffer[:current_buffer_target]
                     frames_stacked = torch.stack(frames_to_process).permute(1, 2, 0)
-                    audio_chunk = self._audio_tokenizer.decode(frames_stacked).squeeze(0).squeeze(0)
+                    # Use autocast to ensure consistent dtype during decode
+                    with torch.autocast(device_type=self.device.type, dtype=self.dtype):
+                        audio_chunk = self._audio_tokenizer.decode(frames_stacked).squeeze(0).squeeze(0)
                     frame_buffer = frame_buffer[current_buffer_target:]
                     is_first_chunk = False  # Switch to larger chunks after first
                     yield audio_chunk.cpu()
@@ -248,7 +257,9 @@ class Generator:
                     actual_frame_count = current_size
                     
                 frames_stacked = torch.stack(frames_to_process).permute(1, 2, 0)
-                audio_chunk = self._audio_tokenizer.decode(frames_stacked).squeeze(0).squeeze(0)
+                # Use autocast to ensure consistent dtype during decode
+                with torch.autocast(device_type=self.device.type, dtype=self.dtype):
+                    audio_chunk = self._audio_tokenizer.decode(frames_stacked).squeeze(0).squeeze(0)
                 
                 # Return only non-padded portion
                 if len(frame_buffer) < current_size:
