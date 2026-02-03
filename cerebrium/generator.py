@@ -48,13 +48,14 @@ class Generator:
 
         self._text_tokenizer = load_llama3_tokenizer()
         device = next(model.parameters()).device
-        dtype = next(model.parameters()).dtype  # Get model's dtype for consistency
+        model_dtype = next(model.parameters()).dtype
 
         mimi_weight = hf_hub_download(loaders.DEFAULT_REPO, loaders.MIMI_NAME)
+        # IMPORTANT: Keep MIMI in float32 - it has strict internal dtype requirements
+        # The moshi library's rms_norm and other ops don't work well with bfloat16
         mimi = loaders.get_mimi(mimi_weight, device=device)
-        
-        # Convert mimi to the same dtype as the main model to avoid dtype mismatches
-        mimi = mimi.to(dtype=dtype)
+        # Explicitly ensure mimi stays in float32
+        mimi = mimi.to(dtype=torch.float32)
         
         num_codebooks = model.config.audio_num_codebooks
         mimi.set_num_codebooks(num_codebooks)
@@ -63,7 +64,7 @@ class Generator:
 
         self.sample_rate = mimi.sample_rate
         self.device = device
-        self.dtype = dtype  # Store dtype for autocast
+        self.model_dtype = model_dtype  # For the main CSM model (bfloat16)
 
         self._first_chunk_size = 5     # First chunk FAST (~400ms) for low latency
         self._stream_buffer_size = 25  # Subsequent chunks larger for smooth audio
@@ -89,10 +90,9 @@ class Generator:
 
     def _tokenize_audio(self, audio: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Tokenize audio using MIMI codec."""
-        audio = audio.to(device=self.device, dtype=self.dtype)
-        # Use autocast to ensure consistent dtype during encode
-        with torch.autocast(device_type=self.device.type, dtype=self.dtype):
-            audio_tokens = self._audio_tokenizer.encode(audio.unsqueeze(0).unsqueeze(0))[0]
+        # MIMI operates in float32 - ensure input matches
+        audio = audio.to(device=self.device, dtype=torch.float32)
+        audio_tokens = self._audio_tokenizer.encode(audio.unsqueeze(0).unsqueeze(0))[0]
         audio_tokens = audio_tokens[:self._num_codebooks, :]
         
         # Add EOS frame
@@ -210,7 +210,8 @@ class Generator:
                 batch_samples = []
 
                 for _ in range(batch_end - i):
-                    with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                    # Use autocast only for the main CSM model generation
+                    with torch.autocast(device_type=self.device.type, dtype=self.model_dtype):
                         sample = self._model.generate_frame(
                             curr_tokens, curr_tokens_mask, curr_pos, temperature, topk
                         )
@@ -234,12 +235,11 @@ class Generator:
                 if len(frame_buffer) >= current_buffer_target:
                     frames_to_process = frame_buffer[:current_buffer_target]
                     frames_stacked = torch.stack(frames_to_process).permute(1, 2, 0)
-                    # Use autocast to ensure consistent dtype during decode
-                    with torch.autocast(device_type=self.device.type, dtype=self.dtype):
-                        audio_chunk = self._audio_tokenizer.decode(frames_stacked).squeeze(0).squeeze(0)
+                    # MIMI decode operates in float32 - no autocast needed
+                    audio_chunk = self._audio_tokenizer.decode(frames_stacked).squeeze(0).squeeze(0)
                     frame_buffer = frame_buffer[current_buffer_target:]
                     is_first_chunk = False  # Switch to larger chunks after first
-                    yield audio_chunk.cpu()
+                    yield audio_chunk.float().cpu()
 
             # Process remaining frames
             if frame_buffer:
@@ -257,16 +257,15 @@ class Generator:
                     actual_frame_count = current_size
                     
                 frames_stacked = torch.stack(frames_to_process).permute(1, 2, 0)
-                # Use autocast to ensure consistent dtype during decode
-                with torch.autocast(device_type=self.device.type, dtype=self.dtype):
-                    audio_chunk = self._audio_tokenizer.decode(frames_stacked).squeeze(0).squeeze(0)
+                # MIMI decode operates in float32 - no autocast needed
+                audio_chunk = self._audio_tokenizer.decode(frames_stacked).squeeze(0).squeeze(0)
                 
                 # Return only non-padded portion
                 if len(frame_buffer) < current_size:
                     actual_samples = int(audio_chunk.shape[0] * actual_frame_count / current_size)
                     audio_chunk = audio_chunk[:actual_samples]
                     
-                yield audio_chunk.cpu()
+                yield audio_chunk.float().cpu()
 
     @torch.inference_mode()
     def generate(
