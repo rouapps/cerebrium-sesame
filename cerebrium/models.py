@@ -1,15 +1,26 @@
+"""
+CSM Model architecture with performance optimizations.
+
+Based on official SesameAILabs/csm implementation with:
+- Optimized sampling without CUDA sync
+- Pre-computed masks where possible
+- Efficient tensor operations
+"""
 import logging
 from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchtune
 from huggingface_hub import PyTorchModelHubMixin
 from torchtune.models import llama3_2
 
 logger = logging.getLogger(__name__)
 
+
 def llama3_2_1B() -> torchtune.modules.transformer.TransformerDecoder:
+    """Create the 1B parameter Llama backbone."""
     return llama3_2.llama3_2(
         vocab_size=128_256,
         num_layers=16,
@@ -24,7 +35,9 @@ def llama3_2_1B() -> torchtune.modules.transformer.TransformerDecoder:
         scale_factor=32,
     )
 
+
 def llama3_2_100M() -> torchtune.modules.transformer.TransformerDecoder:
+    """Create the 100M parameter Llama decoder."""
     return llama3_2.llama3_2(
         vocab_size=128_256,
         num_layers=4,
@@ -39,22 +52,30 @@ def llama3_2_100M() -> torchtune.modules.transformer.TransformerDecoder:
         scale_factor=32,
     )
 
+
 FLAVORS = {
     "llama-1B": llama3_2_1B,
     "llama-100M": llama3_2_100M,
 }
 
+
 def _prepare_transformer(model):
+    """Prepare transformer by removing unused embeddings."""
     embed_dim = model.tok_embeddings.embedding_dim
     model.tok_embeddings = nn.Identity()
     model.output = nn.Identity()
     return model, embed_dim
 
+
 def _create_causal_mask(seq_len: int, device: torch.device):
+    """Create causal attention mask."""
     return torch.tril(torch.ones(seq_len, seq_len, dtype=torch.bool, device=device))
+
 
 def _index_causal_mask(mask: torch.Tensor, input_pos: torch.Tensor):
     """
+    Index into causal mask for given positions.
+    
     Args:
         mask: (max_seq_len, max_seq_len)
         input_pos: (batch_size, seq_len)
@@ -62,22 +83,44 @@ def _index_causal_mask(mask: torch.Tensor, input_pos: torch.Tensor):
     Returns:
         (batch_size, seq_len, max_seq_len)
     """
-    r = mask[input_pos, :]
-    return r
+    return mask[input_pos, :]
 
-def _multinomial_sample_one_no_sync(probs):  # Does multinomial sampling without a cuda synchronization
+
+@torch.jit.script
+def _multinomial_sample_one_no_sync(probs: torch.Tensor) -> torch.Tensor:
+    """
+    Multinomial sampling without CUDA synchronization.
+    
+    Uses Gumbel-max trick for efficient GPU sampling.
+    """
     q = torch.empty_like(probs).exponential_(1)
     return torch.argmax(probs / q, dim=-1, keepdim=True).to(dtype=torch.int)
 
-def sample_topk(logits: torch.Tensor, topk: int, temperature: float):
+
+@torch.jit.script
+def sample_topk(logits: torch.Tensor, topk: int, temperature: float) -> torch.Tensor:
+    """
+    Top-k sampling with temperature.
+    
+    Optimized with:
+    - JIT compilation
+    - Fused softmax operations
+    - No CUDA sync during sampling
+    """
+    # Apply temperature
     logits = logits / temperature
 
+    # Top-k filtering
     filter_value: float = -float("Inf")
-    indices_to_remove = logits < torch.topk(logits, topk)[0][..., -1, None]
+    topk_values, _ = torch.topk(logits, topk)
+    threshold = topk_values[..., -1, None]
+    indices_to_remove = logits < threshold
     scores_processed = logits.masked_fill(indices_to_remove, filter_value)
-    scores_processed = torch.nn.functional.log_softmax(scores_processed, dim=-1)
-    probs = torch.nn.functional.softmax(scores_processed, dim=-1)
+    
+    # Compute probabilities (fused log_softmax + softmax)
+    probs = F.softmax(scores_processed, dim=-1)
 
+    # Sample without sync
     sample_token = _multinomial_sample_one_no_sync(probs)
     return sample_token
 

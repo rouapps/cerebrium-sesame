@@ -1,16 +1,43 @@
 # Cerebrium Sesame CSM deployment requirements
+# Optimized for maximum inference speed
+
+# Core PyTorch with CUDA optimizations
 torch>=2.1.0
 torchaudio>=2.1.0
+
+# Audio processing
 soundfile>=0.12.0
+
+# Torchtune for model architecture
 torchao>=0.4.0
 torchtune>=0.3.0
+
+# Triton for torch.compile inductor backend
 triton>=2.1.0; sys_platform != 'darwin'
+
+# Flash Attention for faster attention (optional but recommended)
+# flash-attn>=2.5.0; sys_platform != 'darwin'
+
+# Transformers and tokenizers
 transformers>=4.40.0
 tokenizers>=0.15.0
 huggingface_hub>=0.20.0
+
+# MIMI audio codec
 moshi>=0.2.2
+
+# Model loading
 safetensors>=0.4.0
+
+# Numpy (must be <2.0 for compatibility)
 numpy<2.0.0
+
+# Fast HuggingFace downloads
 hf_transfer
+
+# API framework
 pydantic>=2.0.0
 fastapi>=0.100.0
+
+# Performance monitoring (optional)
+psutil>=5.9.0
