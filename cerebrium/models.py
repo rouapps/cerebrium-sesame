@@ -93,7 +93,7 @@ def _multinomial_sample_one_no_sync(probs: torch.Tensor) -> torch.Tensor:
     
     Uses Gumbel-max trick for efficient GPU sampling.
     """
-    q = torch.empty_like(probs).exponential_(1)
+    q = torch.empty_like(probs).exponential_(1.0)
     return torch.argmax(probs / q, dim=-1, keepdim=True).to(dtype=torch.int)
 
 
