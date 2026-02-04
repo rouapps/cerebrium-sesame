@@ -10,9 +10,9 @@ exclude = ['.*', 'test.py', '__pycache__']
 # Increased resources for faster inference
 cpu = 4.0
 memory = 24.0
-# Options: AMPERE_A10, AMPERE_A100, HOPPER_H100
-# A100 recommended for best price/performance, H100 for maximum speed
-compute = "AMPERE_A100"
+# ADA_L4 - Best available on standard plan (24GB VRAM, good performance)
+# Alternative: AMPERE_A10 (also 24GB), but L4 is newer architecture
+compute = "ADA_L4"
 
 [cerebrium.scaling]
 min_replicas = 0
